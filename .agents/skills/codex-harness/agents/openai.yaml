@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Harness"
+  short_description: "Design reusable Codex skills and project harnesses"
+  default_prompt: "Use $codex-harness to design a reusable Codex harness for this project."

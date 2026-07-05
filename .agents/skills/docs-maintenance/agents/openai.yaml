@@ -1,0 +1,4 @@
+interface:
+  display_name: "Docs Maintenance"
+  short_description: "Generate and verify repository documentation"
+  default_prompt: "Use $docs-maintenance to update and verify repository documentation."

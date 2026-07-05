@@ -1,0 +1,4 @@
+interface:
+  display_name: "Feature Delivery"
+  short_description: "Plan, implement, validate, and summarize feature work"
+  default_prompt: "Use $feature-delivery to implement this repository feature."

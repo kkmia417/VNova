@@ -1,0 +1,4 @@
+interface:
+  display_name: "Integration QA"
+  short_description: "Check changed artifacts for cross-boundary mismatches"
+  default_prompt: "Use $integration-qa to verify this repository change."

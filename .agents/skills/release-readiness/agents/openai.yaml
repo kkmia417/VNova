@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release Readiness"
+  short_description: "Run release gates, changelog checks, and deployment risk review"
+  default_prompt: "Use $release-readiness to run this repository workflow."
