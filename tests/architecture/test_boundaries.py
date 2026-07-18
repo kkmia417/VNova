@@ -1440,6 +1440,370 @@ def test_python_private_safety_module_may_import_mint_internally(
     assert architecture_boundaries._scan_python(internal_consumer) == []
 
 
+@pytest.mark.parametrize(
+    "source_text",
+    [
+        (
+            "from typing import Any\n"
+            "from vnova_safety import ApprovedResponse, approve\n"
+            "def consume(items: list[Any]) -> None:\n"
+            "    trusted: ApprovedResponse = approve()\n"
+            "    for item in items:\n"
+            "        trusted = item\n"
+            "    forged: ApprovedResponse = trusted\n"
+        ),
+        (
+            "from typing import Any\n"
+            "from vnova_safety import ApprovedResponse, approve\n"
+            "def consume(raw: Any) -> None:\n"
+            "    trusted: ApprovedResponse = approve()\n"
+            "    while raw:\n"
+            "        trusted = raw\n"
+            "        break\n"
+            "    forged: ApprovedResponse = trusted\n"
+        ),
+        (
+            "from typing import Any\n"
+            "from vnova_safety import ApprovedResponse, approve\n"
+            "def consume(manager: Any) -> None:\n"
+            "    trusted: ApprovedResponse = approve()\n"
+            "    with manager as trusted:\n"
+            "        pass\n"
+            "    forged: ApprovedResponse = trusted\n"
+        ),
+        (
+            "from typing import Any\n"
+            "from vnova_safety import ApprovedResponse, approve\n"
+            "def consume(raw: Any) -> None:\n"
+            "    trusted: ApprovedResponse = approve()\n"
+            "    try:\n"
+            "        trusted = raw\n"
+            "    except Exception:\n"
+            "        pass\n"
+            "    forged: ApprovedResponse = trusted\n"
+        ),
+        (
+            "from typing import Any\n"
+            "from vnova_safety import ApprovedResponse, approve\n"
+            "def consume(raw: Any) -> None:\n"
+            "    trusted: ApprovedResponse = approve()\n"
+            "    match raw:\n"
+            "        case trusted:\n"
+            "            pass\n"
+            "    forged: ApprovedResponse = trusted\n"
+        ),
+        (
+            "from typing import Any\n"
+            "from vnova_safety import ApprovedResponse, approve\n"
+            "def consume(raw: Any) -> None:\n"
+            "    trusted: ApprovedResponse = approve()\n"
+            "    if trusted := raw:\n"
+            "        pass\n"
+            "    forged: ApprovedResponse = trusted\n"
+        ),
+    ],
+)
+def test_python_control_flow_rebinding_cannot_preserve_stale_trust(
+    tmp_path: Path,
+    source_text: str,
+) -> None:
+    source = tmp_path / "consumer.py"
+    source.write_text(source_text, encoding="utf-8")
+
+    messages = [violation.message for violation in _scan_python(source)]
+
+    assert "Untrusted value cannot flow into ApprovedResponse" in messages
+
+
+def test_python_exception_target_cannot_inherit_prior_trust(tmp_path: Path) -> None:
+    source = tmp_path / "consumer.py"
+    source.write_text(
+        "from vnova_safety import ApprovedResponse, approve\n"
+        "def consume() -> None:\n"
+        "    trusted: ApprovedResponse = approve()\n"
+        "    try:\n"
+        "        raise RuntimeError\n"
+        "    except Exception as trusted:\n"
+        "        forged: ApprovedResponse = trusted\n",
+        encoding="utf-8",
+    )
+
+    messages = [violation.message for violation in _scan_python(source)]
+
+    assert "Untrusted value cannot flow into ApprovedResponse" in messages
+
+
+def test_python_typed_approved_response_default_is_rejected(tmp_path: Path) -> None:
+    source = tmp_path / "consumer.py"
+    source.write_text(
+        "from vnova_safety import ApprovedResponse\n"
+        "def consume(value: ApprovedResponse = object()) -> None:\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+
+    messages = [violation.message for violation in _scan_python(source)]
+
+    assert "ApprovedResponse parameter defaults are forbidden outside packages/safety" in messages
+
+
+def test_python_optional_approved_response_none_default_is_allowed(tmp_path: Path) -> None:
+    source = tmp_path / "consumer.py"
+    source.write_text(
+        "from vnova_safety import ApprovedResponse\n"
+        "def consume(value: ApprovedResponse | None = None) -> str:\n"
+        "    return value.id if value is not None else ''\n",
+        encoding="utf-8",
+    )
+
+    assert _scan_python(source) == []
+
+
+@pytest.mark.parametrize(
+    "source_text",
+    [
+        (
+            "from vnova_safety import ApprovedResponse\n"
+            "constructors = (ApprovedResponse,)\n"
+            "constructors[0]()\n"
+        ),
+        (
+            "from vnova_safety import ApprovedResponse\n"
+            "class Holder:\n"
+            "    pass\n"
+            "holder = Holder()\n"
+            "holder.constructor = ApprovedResponse\n"
+            "holder.constructor()\n"
+        ),
+        (
+            "from typing import TypeAlias\n"
+            "from vnova_safety import ApprovedResponse\n"
+            'Constructor: TypeAlias = "ApprovedResponse"\n'
+            "Constructor()\n"
+        ),
+        (
+            "import vnova_safety\n"
+            'constructor = getattr(vnova_safety, "ApprovedResponse")\n'
+            "constructor()\n"
+        ),
+    ],
+)
+def test_python_indirect_approved_response_constructors_are_rejected(
+    tmp_path: Path,
+    source_text: str,
+) -> None:
+    source = tmp_path / "consumer.py"
+    source.write_text(source_text, encoding="utf-8")
+
+    messages = [violation.message for violation in _scan_python(source)]
+
+    assert "ApprovedResponse construction is forbidden outside packages/safety" in messages
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "trusted.append(raw)",
+        "trusted[0] = raw",
+        "trusted.extend([raw])",
+    ],
+)
+def test_python_mutable_approved_response_container_poisoning_is_rejected(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    source = tmp_path / "consumer.py"
+    source.write_text(
+        "from typing import Any\n"
+        "from vnova_safety import ApprovedResponse\n"
+        "def consume(raw: Any) -> None:\n"
+        "    trusted: list[ApprovedResponse] = []\n"
+        f"    {mutation}\n"
+        "    forged: list[ApprovedResponse] = trusted\n",
+        encoding="utf-8",
+    )
+
+    messages = [violation.message for violation in _scan_python(source)]
+
+    assert "Untrusted value cannot flow into an ApprovedResponse container" in messages
+
+
+@pytest.mark.parametrize(
+    "producer_body",
+    [
+        "def leak(value: ApprovedResponse):\n    return value\n",
+        "def leak(value: ApprovedResponse):\n    yield value\n",
+        "async def leak(value: ApprovedResponse):\n    return value\n",
+    ],
+)
+def test_python_unannotated_approved_response_producers_are_rejected(
+    tmp_path: Path,
+    producer_body: str,
+) -> None:
+    source = tmp_path / "consumer.py"
+    source.write_text(
+        "from vnova_safety import ApprovedResponse\n" + producer_body,
+        encoding="utf-8",
+    )
+
+    messages = [violation.message for violation in _scan_python(source)]
+
+    assert "ApprovedResponse producer functions are forbidden outside packages/safety" in messages
+
+
+def test_python_untrusted_local_call_argument_is_rejected(tmp_path: Path) -> None:
+    source = tmp_path / "consumer.py"
+    source.write_text(
+        "from typing import Any\n"
+        "from vnova_safety import ApprovedResponse\n"
+        "def consume(value: ApprovedResponse) -> str:\n"
+        "    return value.id\n"
+        "raw: Any = object()\n"
+        "consume(raw)\n",
+        encoding="utf-8",
+    )
+
+    messages = [violation.message for violation in _scan_python(source)]
+
+    assert "Untrusted value cannot flow into ApprovedResponse call parameter" in messages
+
+
+def test_python_safety_factory_symbol_is_not_itself_an_approved_response(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "consumer.py"
+    source.write_text(
+        "from vnova_safety import ApprovedResponse, approve\nforged: ApprovedResponse = approve\n",
+        encoding="utf-8",
+    )
+
+    messages = [violation.message for violation in _scan_python(source)]
+
+    assert "Untrusted value cannot flow into ApprovedResponse" in messages
+
+
+def test_python_direct_extraction_cannot_masquerade_as_approved_container(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "consumer.py"
+    source.write_text(
+        "from vnova_safety import ApprovedResponse\n"
+        "def consume(values: list[ApprovedResponse]) -> None:\n"
+        "    forged: list[ApprovedResponse] = values[0]\n",
+        encoding="utf-8",
+    )
+
+    messages = [violation.message for violation in _scan_python(source)]
+
+    assert "Untrusted value cannot flow into an ApprovedResponse container" in messages
+
+
+def test_python_public_safety_module_cannot_construct_approved_response(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    safety_root = tmp_path / "vnova_safety"
+    safety_root.mkdir()
+    public_model = safety_root / "model.py"
+    public_model.write_text(
+        "class ApprovedResponse:\n    pass\nforged = ApprovedResponse()\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(architecture_boundaries, "SAFETY_ROOT", safety_root.resolve())
+
+    messages = [
+        violation.message for violation in architecture_boundaries._scan_python(public_model)
+    ]
+
+    assert "ApprovedResponse construction is forbidden outside private packages/safety modules" in (
+        messages
+    )
+
+
+@pytest.mark.parametrize(
+    "source_text",
+    [
+        ("from vnova_safety import ApprovedResponse\nApprovedResponse.__new__(ApprovedResponse)\n"),
+        (
+            "from functools import partial\n"
+            "from vnova_safety import ApprovedResponse\n"
+            "constructor = partial(ApprovedResponse)\n"
+            "constructor()\n"
+        ),
+    ],
+)
+def test_python_wrapped_constructor_capabilities_are_rejected(
+    tmp_path: Path,
+    source_text: str,
+) -> None:
+    source = tmp_path / "consumer.py"
+    source.write_text(source_text, encoding="utf-8")
+
+    messages = [violation.message for violation in _scan_python(source)]
+
+    assert "ApprovedResponse construction is forbidden outside packages/safety" in messages
+
+
+@pytest.mark.parametrize(
+    "invocation",
+    [
+        "consume('prefix', raw)",
+        "consume(prefix='prefix', value=raw)",
+    ],
+)
+def test_python_local_call_sink_uses_the_declared_parameter_position(
+    tmp_path: Path,
+    invocation: str,
+) -> None:
+    source = tmp_path / "consumer.py"
+    source.write_text(
+        "from typing import Any\n"
+        "from vnova_safety import ApprovedResponse\n"
+        "def consume(prefix: str, value: ApprovedResponse) -> str:\n"
+        "    return prefix + value.id\n"
+        "raw: Any = object()\n"
+        f"{invocation}\n",
+        encoding="utf-8",
+    )
+
+    messages = [violation.message for violation in _scan_python(source)]
+
+    assert "Untrusted value cannot flow into ApprovedResponse call parameter" in messages
+
+
+def test_python_closure_cannot_leak_captured_approved_response(tmp_path: Path) -> None:
+    source = tmp_path / "consumer.py"
+    source.write_text(
+        "from vnova_safety import ApprovedResponse\n"
+        "def outer(value: ApprovedResponse):\n"
+        "    def leak():\n"
+        "        return value\n"
+        "    return leak\n",
+        encoding="utf-8",
+    )
+
+    messages = [violation.message for violation in _scan_python(source)]
+
+    assert "ApprovedResponse producer functions are forbidden outside packages/safety" in messages
+
+
+def test_python_mutable_container_insert_poisoning_is_rejected(tmp_path: Path) -> None:
+    source = tmp_path / "consumer.py"
+    source.write_text(
+        "from typing import Any\n"
+        "from vnova_safety import ApprovedResponse\n"
+        "def consume(raw: Any) -> None:\n"
+        "    trusted: list[ApprovedResponse] = []\n"
+        "    trusted.insert(0, raw)\n"
+        "    forged: list[ApprovedResponse] = trusted\n",
+        encoding="utf-8",
+    )
+
+    messages = [violation.message for violation in _scan_python(source)]
+
+    assert "Untrusted value cannot flow into an ApprovedResponse container" in messages
+
+
 def test_speech_task_raw_text_field_is_rejected(tmp_path: Path) -> None:
     schema_path = tmp_path / "speech-task.schema.json"
     schema_path.write_text(

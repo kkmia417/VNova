@@ -382,7 +382,7 @@ def _discover_assignment_aliases(tree: ast.AST, aliases: set[str]) -> bool:
     for node in ast.walk(tree):
         targets: list[ast.expr]
         if isinstance(node, ast.TypeAlias):
-            if not _references_approved_response(node.value, aliases):
+            if not _annotation_references_approved_response(node.value, aliases):
                 continue
             targets = [node.name]
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
@@ -929,18 +929,26 @@ class _ApprovedResponseTrustState:
     direct: set[str] = dataclass_field(default_factory=set)
     containers: set[str] = dataclass_field(default_factory=set)
     safety_modules: set[str] = dataclass_field(default_factory=set)
-    safety_values: set[str] = dataclass_field(default_factory=set)
+    safety_factories: set[str] = dataclass_field(default_factory=set)
+    constructors: set[str] = dataclass_field(default_factory=lambda: {"ApprovedResponse"})
 
     def clone(self) -> _ApprovedResponseTrustState:
         return _ApprovedResponseTrustState(
             direct=set(self.direct),
             containers=set(self.containers),
             safety_modules=set(self.safety_modules),
-            safety_values=set(self.safety_values),
+            safety_factories=set(self.safety_factories),
+            constructors=set(self.constructors),
         )
 
     def retain_common(self, *branches: _ApprovedResponseTrustState) -> None:
-        for attribute in ("direct", "containers", "safety_modules", "safety_values"):
+        for attribute in (
+            "direct",
+            "containers",
+            "safety_modules",
+            "safety_factories",
+            "constructors",
+        ):
             current = getattr(self, attribute)
             if branches:
                 current.intersection_update(*(getattr(branch, attribute) for branch in branches))
@@ -949,7 +957,8 @@ class _ApprovedResponseTrustState:
         self.direct.difference_update(names)
         self.containers.difference_update(names)
         self.safety_modules.difference_update(names)
-        self.safety_values.difference_update(names)
+        self.safety_factories.difference_update(names)
+        self.constructors.difference_update(names)
 
 
 def _expression_root_name(node: ast.AST) -> str | None:
@@ -959,20 +968,81 @@ def _expression_root_name(node: ast.AST) -> str | None:
     return current.id if isinstance(current, ast.Name) else None
 
 
-def _is_safety_owned_expression(node: ast.AST, state: _ApprovedResponseTrustState) -> bool:
+def _is_safety_factory_expression(
+    node: ast.AST,
+    state: _ApprovedResponseTrustState,
+) -> bool:
     if isinstance(node, ast.Name):
-        return node.id in state.safety_values
+        return node.id in state.safety_factories
     if isinstance(node, ast.Attribute):
         return _expression_root_name(node) in state.safety_modules
+    return False
+
+
+def _is_safety_factory_call(node: ast.AST, state: _ApprovedResponseTrustState) -> bool:
+    return isinstance(node, ast.Call) and _is_safety_factory_expression(node.func, state)
+
+
+def _qualified_target_names(node: ast.AST) -> set[str]:
+    qualified = _qualified_name(node)
+    if qualified is not None:
+        return {qualified}
+    if isinstance(node, ast.Starred):
+        return _qualified_target_names(node.value)
+    if isinstance(node, (ast.List, ast.Tuple)):
+        return {name for child in node.elts for name in _qualified_target_names(child)}
+    return set()
+
+
+def _has_constructor_capability(  # noqa: PLR0911 - explicit AST cases aid auditing.
+    node: ast.AST,
+    state: _ApprovedResponseTrustState,
+) -> bool:
+    parsed = _parse_forward_annotation(node)
+    if parsed is not None:
+        return _has_constructor_capability(parsed, state)
+    if isinstance(node, ast.Name):
+        return node.id in state.constructors
+    if isinstance(node, ast.Attribute):
+        qualified = _qualified_name(node)
+        return (
+            qualified in state.constructors
+            or node.attr == "ApprovedResponse"
+            or (node.attr == "__new__" and _has_constructor_capability(node.value, state))
+        )
+    if isinstance(node, ast.Subscript):
+        return _has_constructor_capability(node.value, state)
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return any(_has_constructor_capability(child, state) for child in node.elts)
+    if isinstance(node, ast.Dict):
+        return any(
+            _has_constructor_capability(child, state)
+            for child in (*node.keys, *node.values)
+            if child is not None
+        )
+    if isinstance(node, ast.Lambda):
+        return _has_constructor_capability(node.body, state)
     if isinstance(node, ast.Call):
-        return _is_safety_owned_expression(node.func, state)
+        if (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and len(node.args) > GETATTR_ATTRIBUTE_ARGUMENT_POSITION
+            and _literal_string(node.args[GETATTR_ATTRIBUTE_ARGUMENT_POSITION])
+            == "ApprovedResponse"
+        ):
+            return True
+        return any(_has_constructor_capability(argument, state) for argument in node.args) or any(
+            _has_constructor_capability(keyword.value, state) for keyword in node.keywords
+        )
+    if isinstance(node, (ast.Await, ast.NamedExpr, ast.Starred)):
+        return _has_constructor_capability(node.value, state)
     return False
 
 
 def _has_trusted_direct_origin(node: ast.AST, state: _ApprovedResponseTrustState) -> bool:
     if isinstance(node, ast.Name):
-        trusted = node.id in state.direct or node.id in state.safety_values
-    elif _is_safety_owned_expression(node, state):
+        trusted = node.id in state.direct
+    elif _is_safety_factory_call(node, state):
         trusted = True
     elif isinstance(node, (ast.Await, ast.NamedExpr, ast.Starred)):
         trusted = _has_trusted_direct_origin(node.value, state)
@@ -989,23 +1059,19 @@ def _has_trusted_direct_origin(node: ast.AST, state: _ApprovedResponseTrustState
 
 def _has_trusted_container_origin(node: ast.AST, state: _ApprovedResponseTrustState) -> bool:
     if isinstance(node, ast.Name):
-        trusted = node.id in state.containers or node.id in state.safety_values
-    elif _is_safety_owned_expression(node, state):
-        trusted = True
+        trusted = node.id in state.containers
     elif isinstance(node, (ast.Await, ast.NamedExpr, ast.Starred)):
         trusted = _has_trusted_container_origin(node.value, state)
     elif isinstance(node, (ast.List, ast.Set, ast.Tuple)):
-        trusted = all(
+        trusted = bool(node.elts) and all(
             _has_trusted_direct_origin(child, state) or _has_trusted_container_origin(child, state)
             for child in node.elts
         )
     elif isinstance(node, ast.Dict):
-        trusted = all(
+        trusted = bool(node.values) and all(
             _has_trusted_direct_origin(child, state) or _has_trusted_container_origin(child, state)
             for child in node.values
         )
-    elif isinstance(node, (ast.Attribute, ast.Subscript)):
-        trusted = _has_trusted_container_origin(node.value, state)
     elif isinstance(node, ast.IfExp):
         trusted = _has_trusted_container_origin(node.body, state) and _has_trusted_container_origin(
             node.orelse, state
@@ -1051,19 +1117,63 @@ def _has_trusted_origin(
     if kind == APPROVED_OPTIONAL_DIRECT:
         return _has_trusted_optional_direct_origin(node, state)
     if kind == APPROVED_OPTIONAL_CONTAINER:
-        return _has_trusted_optional_container_origin(node, state)
-    return _has_trusted_container_origin(node, state)
+        return _is_empty_container_literal(node) or _has_trusted_optional_container_origin(
+            node, state
+        )
+    return _is_empty_container_literal(node) or _has_trusted_container_origin(node, state)
+
+
+def _is_empty_container_literal(node: ast.AST) -> bool:
+    return isinstance(node, (ast.List, ast.Set, ast.Tuple, ast.Dict)) and not (
+        node.elts if isinstance(node, (ast.List, ast.Set, ast.Tuple)) else node.values
+    )
 
 
 class _ApprovedResponseFlowAnalyzer:
-    def __init__(self, path: Path, aliases: set[str]) -> None:
+    def __init__(
+        self,
+        path: Path,
+        aliases: set[str],
+        *,
+        enforce_flows: bool,
+        private_safety_source: bool,
+    ) -> None:
         self._path = path
         self._aliases = aliases
+        self._enforce_flows = enforce_flows
+        self._private_safety_source = private_safety_source
         self._violations: list[BoundaryViolation] = []
+        self._local_sinks: dict[
+            str,
+            tuple[tuple[str, str, int | None], ...],
+        ] = {}
+        self._check_unannotated_producer: list[bool] = []
+        self._declared_scopes: list[tuple[set[str], set[str]]] = [(set(), set())]
 
     def analyze(self, tree: ast.Module) -> list[BoundaryViolation]:
+        self._collect_local_sinks(tree)
         self._visit_block(tree.body, _ApprovedResponseTrustState())
         return self._violations
+
+    def _collect_local_sinks(self, tree: ast.Module) -> None:
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            parameters: list[tuple[str, str, int | None]] = []
+            positional = (*node.args.posonlyargs, *node.args.args)
+            for position, argument in enumerate(positional):
+                if argument.annotation is None or _annotation_references_any(argument.annotation):
+                    continue
+                kind = _approved_annotation_kind(argument.annotation, self._aliases)
+                if kind is not None:
+                    parameters.append((argument.arg, kind, position))
+            for argument in node.args.kwonlyargs:
+                if argument.annotation is None or _annotation_references_any(argument.annotation):
+                    continue
+                kind = _approved_annotation_kind(argument.annotation, self._aliases)
+                if kind is not None:
+                    parameters.append((argument.arg, kind, None))
+            self._local_sinks[node.name] = tuple(parameters)
 
     def _visit_block(
         self,
@@ -1073,7 +1183,7 @@ class _ApprovedResponseFlowAnalyzer:
         for statement in statements:
             self._visit_statement(statement, state)
 
-    def _visit_statement(
+    def _visit_statement(  # noqa: PLR0911,PLR0912 - explicit statement dispatch.
         self,
         statement: ast.stmt,
         state: _ApprovedResponseTrustState,
@@ -1087,6 +1197,12 @@ class _ApprovedResponseFlowAnalyzer:
         if isinstance(statement, ast.Assign):
             self._record_assignment(statement, state)
             return
+        if isinstance(statement, ast.TypeAlias):
+            target_names = _bound_target_names(statement.name)
+            state.forget(target_names)
+            if _annotation_references_approved_response(statement.value, self._aliases):
+                state.constructors.update(target_names)
+            return
         if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
             self._visit_function(statement, state)
             return
@@ -1095,11 +1211,33 @@ class _ApprovedResponseFlowAnalyzer:
             return
         if self._visit_branching_statement(statement, state):
             return
+        if isinstance(statement, ast.Expr):
+            self._visit_expression(statement.value, state)
+            return
+        if isinstance(statement, ast.Return):
+            if statement.value is not None:
+                self._visit_expression(statement.value, state)
+                self._record_producer(statement.value, state)
+            return
+        if isinstance(statement, ast.Raise):
+            if statement.exc is not None:
+                self._visit_expression(statement.exc, state)
+            if statement.cause is not None:
+                self._visit_expression(statement.cause, state)
+            return
+        if isinstance(statement, ast.Assert):
+            self._visit_expression(statement.test, state)
+            if statement.msg is not None:
+                self._visit_expression(statement.msg, state)
+            return
         if isinstance(statement, (ast.AugAssign, ast.Delete)):
             targets = (
                 [statement.target] if isinstance(statement, ast.AugAssign) else statement.targets
             )
             state.forget({name for target in targets for name in _bound_target_names(target)})
+            state.constructors.difference_update(
+                {name for target in targets for name in _qualified_target_names(target)}
+            )
 
     def _record_import(
         self,
@@ -1116,30 +1254,43 @@ class _ApprovedResponseFlowAnalyzer:
         for imported in statement.names:
             local_name = imported.asname or imported.name
             state.forget({local_name})
-            if (
+            if imported.name == "ApprovedResponse":
+                state.constructors.add(local_name)
+            elif (
                 statement.level == 0
                 and statement.module is not None
                 and _is_safety_module_name(statement.module)
-                and imported.name != "ApprovedResponse"
             ):
-                state.safety_values.add(local_name)
+                state.safety_factories.add(local_name)
 
     def _record_annotated_assignment(
         self,
         statement: ast.AnnAssign,
         state: _ApprovedResponseTrustState,
     ) -> None:
+        if statement.value is not None:
+            self._visit_expression(statement.value, state)
+        if isinstance(statement.target, (ast.Attribute, ast.Subscript)):
+            self._record_container_item_assignment(statement.target, statement.value, state)
+            self._record_constructor_target(statement.target, statement.value, state)
+            return
         names = _bound_target_names(statement.target)
         kind = _approved_annotation_kind(statement.annotation, self._aliases)
+        if kind in {APPROVED_DIRECT, APPROVED_OPTIONAL_DIRECT}:
+            self._declared_scopes[-1][0].update(names)
+        elif kind in {APPROVED_CONTAINER, APPROVED_OPTIONAL_CONTAINER}:
+            self._declared_scopes[-1][1].update(names)
         if kind is None or statement.value is None or _is_ellipsis(statement.value):
             state.forget(names)
+            self._record_constructor_target(statement.target, statement.value, state)
             return
         direct_origin = _has_trusted_direct_origin(statement.value, state)
         container_origin = _has_trusted_container_origin(statement.value, state)
         trusted = _has_trusted_origin(kind, statement.value, state)
-        safety_owned = _is_safety_owned_expression(statement.value, state)
+        safety_factory = _is_safety_factory_expression(statement.value, state)
+        constructor = _has_constructor_capability(statement.value, state)
         state.forget(names)
-        if not trusted:
+        if not trusted and self._enforce_flows:
             message = (
                 "Untrusted value cannot flow into ApprovedResponse"
                 if kind in {APPROVED_DIRECT, APPROVED_OPTIONAL_DIRECT}
@@ -1147,8 +1298,10 @@ class _ApprovedResponseFlowAnalyzer:
             )
             self._violations.append(BoundaryViolation(self._path, statement.value.lineno, message))
             return
-        if safety_owned:
-            state.safety_values.update(names)
+        if safety_factory:
+            state.safety_factories.update(names)
+        elif constructor:
+            state.constructors.update(names)
         elif kind == APPROVED_DIRECT or (kind == APPROVED_OPTIONAL_DIRECT and direct_origin):
             state.direct.update(names)
         elif kind == APPROVED_CONTAINER or (
@@ -1161,25 +1314,77 @@ class _ApprovedResponseFlowAnalyzer:
         statement: ast.Assign,
         state: _ApprovedResponseTrustState,
     ) -> None:
+        self._visit_expression(statement.value, state)
+        for target in statement.targets:
+            if isinstance(target, (ast.Attribute, ast.Subscript)):
+                self._record_container_item_assignment(target, statement.value, state)
+                self._record_constructor_target(target, statement.value, state)
         names = {name for target in statement.targets for name in _bound_target_names(target)}
-        safety_owned = _is_safety_owned_expression(statement.value, state)
+        safety_factory = _is_safety_factory_expression(statement.value, state)
+        safety_module = (
+            isinstance(statement.value, ast.Name) and statement.value.id in state.safety_modules
+        )
+        constructor = _has_constructor_capability(statement.value, state)
         direct = _has_trusted_direct_origin(statement.value, state)
         container = _has_trusted_container_origin(statement.value, state)
         state.forget(names)
-        if safety_owned:
-            state.safety_values.update(names)
+        if safety_factory:
+            state.safety_factories.update(names)
+        elif safety_module:
+            state.safety_modules.update(names)
+        elif constructor:
+            state.constructors.update(names)
         elif direct:
             state.direct.update(names)
         elif container:
             state.containers.update(names)
+
+    def _record_constructor_target(
+        self,
+        target: ast.AST,
+        value: ast.AST | None,
+        state: _ApprovedResponseTrustState,
+    ) -> None:
+        qualified_targets = _qualified_target_names(target)
+        state.constructors.difference_update(qualified_targets)
+        if value is not None and _has_constructor_capability(value, state):
+            state.constructors.update(qualified_targets)
+
+    def _record_container_item_assignment(
+        self,
+        target: ast.Attribute | ast.Subscript,
+        value: ast.AST | None,
+        state: _ApprovedResponseTrustState,
+    ) -> None:
+        root = _expression_root_name(target)
+        if root not in state.containers:
+            return
+        trusted = value is not None and _has_trusted_direct_origin(value, state)
+        if not trusted and self._enforce_flows:
+            line = getattr(value, "lineno", target.lineno)
+            self._violations.append(
+                BoundaryViolation(
+                    self._path,
+                    line,
+                    "Untrusted value cannot flow into an ApprovedResponse container",
+                )
+            )
+        if not trusted:
+            state.containers.clear()
 
     def _visit_function(
         self,
         statement: ast.FunctionDef | ast.AsyncFunctionDef,
         state: _ApprovedResponseTrustState,
     ) -> None:
+        self._visit_function_definition_expressions(statement, state)
         state.forget({statement.name})
-        child = state.clone()
+        child = _ApprovedResponseTrustState(
+            safety_modules=set(state.safety_modules),
+            safety_factories=set(state.safety_factories),
+            constructors=set(state.constructors),
+        )
+        self._declared_scopes.append((set(), set()))
         positional = (*statement.args.posonlyargs, *statement.args.args, *statement.args.kwonlyargs)
         for argument in positional:
             self._record_parameter(argument, child, container=False)
@@ -1187,7 +1392,53 @@ class _ApprovedResponseFlowAnalyzer:
             self._record_parameter(statement.args.vararg, child, container=True)
         if statement.args.kwarg is not None:
             self._record_parameter(statement.args.kwarg, child, container=True)
+        self._check_unannotated_producer.append(
+            statement.returns is None
+            or not _annotation_references_approved_response(statement.returns, self._aliases)
+        )
         self._visit_block(statement.body, child)
+        self._check_unannotated_producer.pop()
+        self._declared_scopes.pop()
+
+    def _visit_function_definition_expressions(
+        self,
+        statement: ast.FunctionDef | ast.AsyncFunctionDef,
+        state: _ApprovedResponseTrustState,
+    ) -> None:
+        positional = (*statement.args.posonlyargs, *statement.args.args)
+        if statement.args.defaults:
+            for argument, default in zip(
+                positional[-len(statement.args.defaults) :],
+                statement.args.defaults,
+                strict=True,
+            ):
+                self._visit_expression(default, state)
+                self._record_parameter_default(argument, default)
+        for argument, kw_default in zip(
+            statement.args.kwonlyargs,
+            statement.args.kw_defaults,
+            strict=True,
+        ):
+            if kw_default is None:
+                continue
+            self._visit_expression(kw_default, state)
+            self._record_parameter_default(argument, kw_default)
+        for decorator in statement.decorator_list:
+            self._visit_expression(decorator, state)
+
+    def _record_parameter_default(self, argument: ast.arg, default: ast.AST) -> None:
+        if not self._enforce_flows or argument.annotation is None:
+            return
+        kind = _approved_annotation_kind(argument.annotation, self._aliases)
+        if kind is None or (isinstance(default, ast.Constant) and default.value is None):
+            return
+        self._violations.append(
+            BoundaryViolation(
+                self._path,
+                getattr(default, "lineno", 1),
+                "ApprovedResponse parameter defaults are forbidden outside packages/safety",
+            )
+        )
 
     def _record_parameter(
         self,
@@ -1204,23 +1455,41 @@ class _ApprovedResponseFlowAnalyzer:
             return
         if container or kind in {APPROVED_CONTAINER, APPROVED_OPTIONAL_CONTAINER}:
             state.containers.add(argument.arg)
+            self._declared_scopes[-1][1].add(argument.arg)
         else:
             state.direct.add(argument.arg)
+            self._declared_scopes[-1][0].add(argument.arg)
 
     def _visit_class(
         self,
         statement: ast.ClassDef,
         state: _ApprovedResponseTrustState,
     ) -> None:
+        for expression in (*statement.bases, *statement.decorator_list):
+            self._visit_expression(expression, state)
+        for keyword in statement.keywords:
+            self._visit_expression(keyword.value, state)
         state.forget({statement.name})
-        self._visit_block(statement.body, state.clone())
+        if statement.name == "ApprovedResponse" or any(
+            _has_constructor_capability(base, state) for base in statement.bases
+        ):
+            state.constructors.add(statement.name)
+        child = _ApprovedResponseTrustState(
+            safety_modules=set(state.safety_modules),
+            safety_factories=set(state.safety_factories),
+            constructors=set(state.constructors),
+        )
+        self._declared_scopes.append((set(), set()))
+        self._visit_block(statement.body, child)
+        self._declared_scopes.pop()
 
-    def _visit_branching_statement(
+    def _visit_branching_statement(  # noqa: PLR0912,PLR0915 - centralized joins.
         self,
         statement: ast.stmt,
         state: _ApprovedResponseTrustState,
     ) -> bool:
         if isinstance(statement, ast.If):
+            self._visit_expression(statement.test, state)
             body = state.clone()
             alternative = state.clone()
             self._visit_block(statement.body, body)
@@ -1228,36 +1497,247 @@ class _ApprovedResponseFlowAnalyzer:
             state.retain_common(body, alternative)
             handled = True
         elif isinstance(statement, (ast.For, ast.AsyncFor)):
+            self._visit_expression(statement.iter, state)
+            zero_iterations = state.clone()
             body = state.clone()
             body.forget(_bound_target_names(statement.target))
             self._visit_block(statement.body, body)
-            self._visit_block(statement.orelse, state.clone())
+            self._visit_block(statement.orelse, zero_iterations)
+            self._visit_block(statement.orelse, body)
+            state.retain_common(zero_iterations, body)
             handled = True
         elif isinstance(statement, ast.While):
-            self._visit_block(statement.body, state.clone())
-            self._visit_block(statement.orelse, state.clone())
+            self._visit_expression(statement.test, state)
+            zero_iterations = state.clone()
+            body = state.clone()
+            self._visit_block(statement.body, body)
+            self._visit_block(statement.orelse, zero_iterations)
+            self._visit_block(statement.orelse, body)
+            state.retain_common(zero_iterations, body)
             handled = True
         elif isinstance(statement, (ast.With, ast.AsyncWith)):
             body = state.clone()
             for item in statement.items:
+                self._visit_expression(item.context_expr, body)
                 if item.optional_vars is not None:
                     body.forget(_bound_target_names(item.optional_vars))
             self._visit_block(statement.body, body)
+            state.retain_common(body)
             handled = True
         elif isinstance(statement, (ast.Try, ast.TryStar)):
-            self._visit_block(statement.body, state.clone())
-            self._visit_block(statement.orelse, state.clone())
-            self._visit_block(statement.finalbody, state.clone())
+            branches: list[_ApprovedResponseTrustState] = []
+            normal = state.clone()
+            self._visit_block(statement.body, normal)
+            self._visit_block(statement.orelse, normal)
+            branches.append(normal)
             for handler in statement.handlers:
-                self._visit_block(handler.body, state.clone())
+                branch = state.clone()
+                if handler.type is not None:
+                    self._visit_expression(handler.type, branch)
+                if handler.name is not None:
+                    branch.forget({handler.name})
+                self._visit_block(handler.body, branch)
+                branches.append(branch)
+            for branch in branches:
+                self._visit_block(statement.finalbody, branch)
+            state.retain_common(*branches)
             handled = True
         elif isinstance(statement, ast.Match):
+            self._visit_expression(statement.subject, state)
+            branches = [state.clone()]
             for case in statement.cases:
-                self._visit_block(case.body, state.clone())
+                branch = state.clone()
+                branch.forget(_match_bound_names(case.pattern))
+                if case.guard is not None:
+                    self._visit_expression(case.guard, branch)
+                self._visit_block(case.body, branch)
+                branches.append(branch)
+            state.retain_common(*branches)
             handled = True
         else:
             handled = False
         return handled
+
+    def _visit_expression(
+        self,
+        expression: ast.AST,
+        state: _ApprovedResponseTrustState,
+    ) -> None:
+        if isinstance(expression, ast.NamedExpr):
+            self._visit_expression(expression.value, state)
+            synthetic = ast.Assign(targets=[expression.target], value=expression.value)
+            ast.copy_location(synthetic, expression)
+            self._record_assignment_without_expression(synthetic, state)
+            return
+        if isinstance(expression, (ast.Yield, ast.YieldFrom)):
+            if expression.value is not None:
+                self._visit_expression(expression.value, state)
+                self._record_producer(expression.value, state)
+            return
+        if isinstance(expression, ast.Lambda):
+            for default in (*expression.args.defaults, *expression.args.kw_defaults):
+                if default is not None:
+                    self._visit_expression(default, state)
+            return
+        if isinstance(expression, ast.Call):
+            for child in (expression.func, *expression.args):
+                self._visit_expression(child, state)
+            for keyword in expression.keywords:
+                self._visit_expression(keyword.value, state)
+            self._record_constructor_call(expression, state)
+            self._record_mutating_call(expression, state)
+            self._record_local_sink_call(expression, state)
+            return
+        for nested in ast.iter_child_nodes(expression):
+            self._visit_expression(nested, state)
+
+    def _record_assignment_without_expression(
+        self,
+        statement: ast.Assign,
+        state: _ApprovedResponseTrustState,
+    ) -> None:
+        names = {name for target in statement.targets for name in _bound_target_names(target)}
+        safety_factory = _is_safety_factory_expression(statement.value, state)
+        constructor = _has_constructor_capability(statement.value, state)
+        direct = _has_trusted_direct_origin(statement.value, state)
+        container = _has_trusted_container_origin(statement.value, state)
+        state.forget(names)
+        if safety_factory:
+            state.safety_factories.update(names)
+        elif constructor:
+            state.constructors.update(names)
+        elif direct:
+            state.direct.update(names)
+        elif container:
+            state.containers.update(names)
+
+    def _record_constructor_call(
+        self,
+        call: ast.Call,
+        state: _ApprovedResponseTrustState,
+    ) -> None:
+        if self._private_safety_source or not _has_constructor_capability(call.func, state):
+            return
+        message = (
+            "ApprovedResponse construction is forbidden outside private packages/safety modules"
+            if _is_under(self._path, SAFETY_ROOT)
+            else "ApprovedResponse construction is forbidden outside packages/safety"
+        )
+        self._violations.append(BoundaryViolation(self._path, call.lineno, message))
+
+    def _record_mutating_call(
+        self,
+        call: ast.Call,
+        state: _ApprovedResponseTrustState,
+    ) -> None:
+        if not isinstance(call.func, ast.Attribute):
+            return
+        root = _expression_root_name(call.func.value)
+        if root not in state.containers:
+            return
+        if call.func.attr == "append":
+            trusted = bool(call.args) and _has_trusted_direct_origin(call.args[0], state)
+        elif call.func.attr in {"insert", "setdefault", "__setitem__"}:
+            trusted = len(call.args) > 1 and _has_trusted_direct_origin(call.args[1], state)
+        elif call.func.attr in {"extend", "update"}:
+            trusted = bool(call.args) and _has_trusted_container_origin(call.args[0], state)
+        else:
+            return
+        if not trusted and self._enforce_flows:
+            self._violations.append(
+                BoundaryViolation(
+                    self._path,
+                    call.lineno,
+                    "Untrusted value cannot flow into an ApprovedResponse container",
+                )
+            )
+        if not trusted:
+            state.containers.clear()
+
+    def _record_local_sink_call(
+        self,
+        call: ast.Call,
+        state: _ApprovedResponseTrustState,
+    ) -> None:
+        if not self._enforce_flows or not isinstance(call.func, ast.Name):
+            return
+        parameters = self._local_sinks.get(call.func.id, ())
+        if not parameters:
+            return
+        keyword_values = {
+            keyword.arg: keyword.value for keyword in call.keywords if keyword.arg is not None
+        }
+        for name, kind, position in parameters:
+            value = (
+                call.args[position]
+                if position is not None and position < len(call.args)
+                else keyword_values.get(name)
+            )
+            if value is None or _has_trusted_origin(kind, value, state):
+                continue
+            self._violations.append(
+                BoundaryViolation(
+                    self._path,
+                    value.lineno,
+                    "Untrusted value cannot flow into ApprovedResponse call parameter",
+                )
+            )
+
+    def _record_producer(
+        self,
+        value: ast.AST,
+        state: _ApprovedResponseTrustState,
+    ) -> None:
+        if (
+            not self._enforce_flows
+            or not self._check_unannotated_producer
+            or not self._check_unannotated_producer[-1]
+        ):
+            return
+        if not (
+            _has_trusted_direct_origin(value, state)
+            or _has_trusted_container_origin(value, state)
+            or self._has_declared_approved_origin(value)
+        ):
+            return
+        self._violations.append(
+            BoundaryViolation(
+                self._path,
+                getattr(value, "lineno", 1),
+                "ApprovedResponse producer functions are forbidden outside packages/safety",
+            )
+        )
+
+    def _has_declared_approved_origin(self, value: ast.AST) -> bool:
+        direct_names = {name for direct, _containers in self._declared_scopes for name in direct}
+        container_names = {
+            name for _direct, containers in self._declared_scopes for name in containers
+        }
+        if isinstance(value, ast.Name):
+            return value.id in direct_names or value.id in container_names
+        if isinstance(value, (ast.Await, ast.NamedExpr, ast.Starred)):
+            return self._has_declared_approved_origin(value.value)
+        if isinstance(value, (ast.Attribute, ast.Subscript)):
+            return _expression_root_name(value.value) in container_names
+        if isinstance(value, (ast.List, ast.Set, ast.Tuple)):
+            return bool(value.elts) and all(
+                self._has_declared_approved_origin(child) for child in value.elts
+            )
+        if isinstance(value, ast.Dict):
+            return bool(value.values) and all(
+                self._has_declared_approved_origin(child) for child in value.values
+            )
+        return False
+
+
+def _match_bound_names(pattern: ast.pattern) -> set[str]:
+    names: set[str] = set()
+    for node in ast.walk(pattern):
+        if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name is not None:
+            names.add(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest is not None:
+            names.add(node.rest)
+    return names
 
 
 def _scan_python(path: Path) -> list[BoundaryViolation]:
@@ -1272,6 +1752,14 @@ def _scan_python(path: Path) -> list[BoundaryViolation]:
     importlib_aliases, import_module_aliases = _dynamic_import_aliases(tree)
     violations.extend(_dynamic_loader_surface_violations(path, tree))
     violations.extend(_public_safety_surface_violations(path, tree))
+    violations.extend(
+        _ApprovedResponseFlowAnalyzer(
+            path,
+            approved_response_aliases,
+            enforce_flows=not inside_safety,
+            private_safety_source=_is_private_safety_source(path),
+        ).analyze(tree)
+    )
     if not inside_safety:
         violations.extend(
             _external_approved_response_declaration_violations(
@@ -1279,9 +1767,6 @@ def _scan_python(path: Path) -> list[BoundaryViolation]:
                 tree,
                 approved_response_aliases,
             )
-        )
-        violations.extend(
-            _ApprovedResponseFlowAnalyzer(path, approved_response_aliases).analyze(tree)
         )
     for node in ast.walk(tree):
         violations.extend(
@@ -1313,25 +1798,16 @@ def _scan_python(path: Path) -> list[BoundaryViolation]:
                         "ApprovedResponse subclassing is forbidden outside packages/safety",
                     )
                 )
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.name == "ApprovedResponse" and not inside_safety:
-                violations.append(
-                    BoundaryViolation(
-                        path,
-                        node.lineno,
-                        "ApprovedResponse may be defined only under packages/safety",
-                    )
-                )
         elif (
-            isinstance(node, ast.Call)
-            and _call_name(node) in approved_response_aliases
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "ApprovedResponse"
             and not inside_safety
         ):
             violations.append(
                 BoundaryViolation(
                     path,
                     node.lineno,
-                    "ApprovedResponse construction is forbidden outside packages/safety",
+                    "ApprovedResponse may be defined only under packages/safety",
                 )
             )
     return violations
