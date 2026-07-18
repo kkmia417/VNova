@@ -1,0 +1,37 @@
+# PROPOSAL ONLY — NOT READY FOR THE STAGE A CANDIDATE.
+# A human repository administrator must add a distinct, write-capable, non-author
+# collaborator to every applicable last-matching protected rule before freeze.
+# Later specific rules do not inherit owners from `*`. GitHub Rulesets must require
+# code-owner review; this file alone does not make review mandatory.
+*                                      @kkmia417
+
+/AGENTS.md                             @kkmia417
+/.github/                              @kkmia417
+/docs/adr/                             @kkmia417
+/docs/architecture/open-decisions.md  @kkmia417
+/docs/governance/open-decision-dispositions.md @kkmia417
+/docs/governance/architecture-foundation-review.md @kkmia417
+/docs/governance/foundation-authority-and-bootstrap-proposal.md @kkmia417
+/docs/governance/ci-quality-gates.md  @kkmia417
+/packages/contracts/                   @kkmia417
+/packages/safety/                      @kkmia417
+/specs/events/                         @kkmia417
+/tooling/architecture/                 @kkmia417
+/tests/architecture/                   @kkmia417
+/tests/red-team/                       @kkmia417
+/.importlinter                         @kkmia417
+/dependency-cruiser.config.mjs         @kkmia417
+/package.json                          @kkmia417
+/pyproject.toml                        @kkmia417
+
+**/alembic/versions/                   @kkmia417
+**/migrations/                         @kkmia417
+**/personas/                           @kkmia417
+**/policies/                           @kkmia417
+**/prompts/                            @kkmia417
+**/provider-gateways/                  @kkmia417
+**/providers/                          @kkmia417
+
+/apps/stage-host/                      @kkmia417
+/deploy/                               @kkmia417
+/infra/                                @kkmia417
