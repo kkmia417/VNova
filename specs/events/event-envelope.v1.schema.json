@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:vnova:event-envelope:1",
+  "title": "VNova Event Envelope v1",
+  "description": "Base transport envelope. Payload validation additionally requires the event catalog entry selected by type and schema_version.",
+  "x-vnova-json-profile": {
+    "maxContainerDepth": 64,
+    "maxNodes": 10000,
+    "maxUtf8StringBytes": 1048576,
+    "normalizeNegativeZero": true,
+    "requireUnicodeScalarStrings": true
+  },
+  "$defs": {
+    "JsonValue": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "boolean" },
+        {
+          "type": "number",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991,
+          "description": "Portable IEEE-754 JSON number range shared by Python and TypeScript runtimes."
+        },
+        { "type": "string" },
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/JsonValue" }
+        },
+        {
+          "type": "object",
+          "x-vnova-extension-point": "Recursive JSON object values may contain arbitrary string keys.",
+          "additionalProperties": { "$ref": "#/$defs/JsonValue" }
+        }
+      ]
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_id", "type", "schema_version", "stream_session_id", "occurred_at", "payload"],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "Globally unique immutable event identifier."
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Za-z0-9]+$",
+      "description": "Event type registered in event-catalog.v1.json."
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "description": "Payload schema version scoped to the event type."
+    },
+    "stream_session_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "turn_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?!0000)[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.(?!000000)[0-9]{6})?Z$",
+      "description": "Canonical UTC RFC 3339 timestamp: uppercase T/Z, no leap second, and either no fraction or exactly six fractional digits whose value is not all zero."
+    },
+    "payload": {
+      "type": "object",
+      "x-vnova-extension-point": "Envelope payload keys are governed by the active event-specific payload schema.",
+      "additionalProperties": { "$ref": "#/$defs/JsonValue" },
+      "description": "Validated against the payload schema selected by (type, schema_version)."
+    }
+  }
+}

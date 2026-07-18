@@ -1,0 +1,16 @@
+.agents/
+.git/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+coverage/
+node_modules/
+pnpm-lock.yaml
+uv.lock
+packages/contracts/python/src/vnova_contracts/generated/
+packages/contracts/typescript/src/generated/
+
+# Accepted ADRs are immutable historical records; change decisions through superseding ADRs.
+docs/adr/0016-stage-host-and-cloud-local-topology.md
+docs/adr/0017-data-retention-privacy-and-pii.md

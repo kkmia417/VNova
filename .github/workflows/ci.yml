@@ -1,0 +1,213 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: quality (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - windows-2025
+    env:
+      CI: "true"
+      PYTHONUTF8: "1"
+      UV_MANAGED_PYTHON: "true"
+    steps:
+      - name: Check out repository
+        timeout-minutes: 5
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        timeout-minutes: 5
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .node-version
+          check-latest: false
+
+      - name: Set up uv and Python
+        timeout-minutes: 10
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: 0.11.28
+          python-version: 3.13.14
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: uv.lock
+          save-cache: ${{ github.event_name != 'pull_request' }}
+
+      - name: Install exact Python runtime
+        timeout-minutes: 10
+        run: uv python install 3.13.14
+
+      - name: Install Node.js dependencies
+        timeout-minutes: 10
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: Install locked third-party Python dependencies
+        timeout-minutes: 10
+        run: uv sync --all-packages --locked --no-install-workspace --no-build --python 3.13.14
+
+      - name: Install Python workspace packages
+        timeout-minutes: 5
+        run: uv sync --all-packages --locked --no-build-isolation --python 3.13.14
+
+      - name: Run quality gates
+        timeout-minutes: 15
+        run: corepack pnpm run verify
+
+      - name: Build TypeScript packages
+        timeout-minutes: 5
+        run: corepack pnpm run build
+
+      - name: Build Python packages
+        timeout-minutes: 5
+        run: uv build --all-packages --no-build-isolation --clear --python 3.13.14
+
+  package-artifacts:
+    name: package-artifacts (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - windows-2025
+    permissions:
+      contents: read
+    env:
+      CI: "true"
+      PYTHONUTF8: "1"
+      UV_MANAGED_PYTHON: "true"
+    steps:
+      - name: Check out repository
+        timeout-minutes: 5
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        timeout-minutes: 5
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .node-version
+          check-latest: false
+
+      - name: Set up uv and Python
+        timeout-minutes: 10
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: 0.11.28
+          python-version: 3.13.14
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: uv.lock
+          save-cache: ${{ github.event_name != 'pull_request' }}
+
+      - name: Install exact Python runtime
+        timeout-minutes: 10
+        run: uv python install 3.13.14
+
+      - name: Install Node.js dependencies
+        timeout-minutes: 10
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: Install locked third-party Python dependencies
+        timeout-minutes: 10
+        run: uv sync --all-packages --locked --no-install-workspace --no-build --python 3.13.14
+
+      - name: Install Python workspace packages
+        timeout-minutes: 5
+        run: uv sync --all-packages --locked --no-build-isolation --python 3.13.14
+
+      - name: Build and verify release archives
+        timeout-minutes: 15
+        run: corepack pnpm run artifacts:verify
+
+  security:
+    name: security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Check out complete history
+        timeout-minutes: 5
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Scan committed secrets
+        timeout-minutes: 10
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+          GITLEAKS_VERSION: 8.28.0
+
+      - name: Review dependency changes
+        if: ${{ github.event_name == 'pull_request' }}
+        timeout-minutes: 10
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+
+      - name: Initialize CodeQL
+        timeout-minutes: 10
+        uses: github/codeql-action/init@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        with:
+          languages: javascript-typescript,python
+          queries: security-extended
+
+      - name: Analyze source with CodeQL
+        timeout-minutes: 15
+        uses: github/codeql-action/analyze@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+
+  ci-required:
+    name: ci-required
+    if: ${{ always() }}
+    needs:
+      - quality
+      - package-artifacts
+      - security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require every quality job to pass
+        if: ${{ needs.quality.result != 'success' }}
+        timeout-minutes: 1
+        run: exit 1
+
+      - name: Require package artifact verification to pass
+        if: ${{ needs.package-artifacts.result != 'success' }}
+        timeout-minutes: 1
+        run: exit 1
+
+      - name: Require security verification to pass
+        if: ${{ needs.security.result != 'success' }}
+        timeout-minutes: 1
+        run: exit 1

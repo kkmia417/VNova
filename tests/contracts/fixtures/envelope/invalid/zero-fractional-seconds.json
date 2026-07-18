@@ -1,0 +1,8 @@
+{
+  "event_id": "018f47df-7c09-7b1a-83b5-57f0d6e15f3f",
+  "type": "ModeChanged",
+  "schema_version": 1,
+  "stream_session_id": "018f47df-7c09-7b1a-83b5-57f0d6e15f40",
+  "occurred_at": "2026-07-17T00:00:00.000000Z",
+  "payload": {}
+}

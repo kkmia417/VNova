@@ -1,1 +1,33 @@
 .serena/
+
+# Python
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.pytest-tmp/
+.pytest-tmp-*/
+.ruff_cache/
+.venv/
+dist/
+build/
+*.egg-info/
+
+# Node / TypeScript
+node_modules/
+.pnpm-store/
+.next/
+coverage/
+*.tsbuildinfo
+
+# Local tooling and secrets
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+*.log
+
+# Operating systems
+.DS_Store
+Thumbs.db

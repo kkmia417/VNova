@@ -1,0 +1,12 @@
+packages:
+  - "packages/contracts/typescript"
+
+linkWorkspacePackages: false
+preferFrozenLockfile: true
+saveExact: true
+strictPeerDependencies: true
+strictDepBuilds: true
+verifyDepsBeforeRun: false
+
+onlyBuiltDependencies:
+  - esbuild

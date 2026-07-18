@@ -1,0 +1,97 @@
+[project]
+name = "vnova-workspace"
+version = "0.0.0"
+description = "Production-grade LLM VTuber and AI talent broadcast runtime"
+requires-python = ">=3.13,<3.14"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "datamodel-code-generator>=0.33,<1",
+    "hatchling==1.31.0",
+    "import-linter>=2.6,<3",
+    "jsonschema[format]>=4.26,<5",
+    "mypy>=1.17,<2",
+    "pyyaml==6.0.3",
+    "referencing>=0.36,<1",
+    "pytest>=8.4,<10",
+    "pytest-cov>=6,<8",
+    "ruff>=0.12,<1",
+    "types-jsonschema>=4.26,<5",
+]
+
+[tool.uv]
+package = false
+required-version = ">=0.11.15,<0.12"
+
+[tool.uv.workspace]
+members = [
+    "packages/contracts/python",
+    "packages/safety",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+extend-exclude = [
+    ".agents",
+    ".venv",
+    "node_modules",
+    "packages/contracts/python/src/vnova_contracts/generated",
+]
+
+[tool.ruff.lint]
+select = [
+    "A",
+    "ASYNC",
+    "B",
+    "C4",
+    "DTZ",
+    "E",
+    "F",
+    "I",
+    "ISC",
+    "N",
+    "PERF",
+    "PIE",
+    "PL",
+    "PYI",
+    "RUF",
+    "S",
+    "SIM",
+    "T20",
+    "UP",
+    "W",
+]
+ignore = [
+    "ISC001",
+    "PLR0913",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+"tooling/**/*.py" = ["S603", "T201"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_unreachable = true
+pretty = true
+mypy_path = [
+    "packages/contracts/python/src",
+    "packages/safety/src",
+]
+exclude = [
+    "packages/contracts/python/src/vnova_contracts/generated/",
+]
+
+[tool.pytest.ini_options]
+addopts = [
+    "-p",
+    "no:cacheprovider",
+    "--basetemp=.pytest-tmp",
+    "--strict-config",
+    "--strict-markers",
+    "-ra",
+]
+testpaths = ["tests"]

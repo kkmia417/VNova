@@ -1,0 +1,31 @@
+{
+  "name": "@vnova/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Generated and runtime-validated VNova contracts",
+  "engines": {
+    "node": ">=24.11.0 <25"
+  },
+  "files": [
+    "dist",
+    "contract-manifest.json"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./contract-manifest.json": "./contract-manifest.json"
+  },
+  "scripts": {
+    "build": "node scripts/clean-build.mjs && tsc --build tsconfig.build.json",
+    "prepack": "node scripts/prepack.mjs",
+    "test": "vitest run src",
+    "typecheck": "tsc --noEmit --project tsconfig.json"
+  },
+  "dependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "catalog_source": "specs/events/event-catalog.v1.json",
+  "catalog_source_sha256": "546afd44d0b5a3b69e3b86bd9af2c4a64500ef190e14f61627611c5fbdfef622",
+  "generators": {
+    "python": "datamodel-codegen 0.68.1",
+    "typescript": "json-schema-to-typescript 15.0.4"
+  },
+  "manifest_version": 2,
+  "schema_id": "urn:vnova:event-envelope:1",
+  "source": "specs/events/event-envelope.v1.schema.json",
+  "source_sha256": "f8a457ee807ca3e18481d48f5c40c16442787b75ad878075a157c4b3568798bc",
+  "workspace_artifacts": [
+    {
+      "path": "packages/contracts/python/src/vnova_contracts/generated/event_envelope_v1.py",
+      "sha256": "dc8c2b09abd10f8923ae278ec5853730ec70677118d6493c34d0926be763e589"
+    },
+    {
+      "path": "packages/contracts/python/src/vnova_contracts/schemas/event-envelope.v1.schema.json",
+      "sha256": "f8a457ee807ca3e18481d48f5c40c16442787b75ad878075a157c4b3568798bc"
+    },
+    {
+      "path": "packages/contracts/python/src/vnova_contracts/registry/active-event-registry.v1.json",
+      "sha256": "5636b04d3f12e8e91aaa4fd2b134099e56810c7eff6cddfc6fc68819c9b5ef39"
+    },
+    {
+      "path": "packages/contracts/typescript/src/generated/event-envelope.v1.ts",
+      "sha256": "0e76ed727107098c34c3ff7f8fa0ae825e732ead4fee26cc1ca586829afe93fa"
+    },
+    {
+      "path": "packages/contracts/typescript/src/generated/event-envelope.v1.schema.json",
+      "sha256": "f8a457ee807ca3e18481d48f5c40c16442787b75ad878075a157c4b3568798bc"
+    },
+    {
+      "path": "packages/contracts/typescript/src/generated/active-event-registry.v1.json",
+      "sha256": "5636b04d3f12e8e91aaa4fd2b134099e56810c7eff6cddfc6fc68819c9b5ef39"
+    }
+  ]
+}

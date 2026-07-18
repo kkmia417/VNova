@@ -1,0 +1,20 @@
+{
+  "catalog_version": 1,
+  "description": "Architecturally required event types. Entries become active only with a governed payload schema and shared fixtures.",
+  "events": [
+    { "type": "ModeChanged", "schema_version": 1, "status": "required" },
+    { "type": "OperatorPresenceChanged", "schema_version": 1, "status": "required" },
+    { "type": "PolicyVersionActivated", "schema_version": 1, "status": "required" },
+    { "type": "PromptVersionActivated", "schema_version": 1, "status": "required" },
+    { "type": "MemoryWritten", "schema_version": 1, "status": "required" },
+    { "type": "MemoryDeleted", "schema_version": 1, "status": "required" },
+    { "type": "RigConnected", "schema_version": 1, "status": "required" },
+    { "type": "RigDisconnected", "schema_version": 1, "status": "required" },
+    { "type": "CandidateExpired", "schema_version": 1, "status": "required" },
+    { "type": "SafetyLayerUnavailable", "schema_version": 1, "status": "required" },
+    { "type": "FailClosedActivated", "schema_version": 1, "status": "required" },
+    { "type": "SilenceThresholdExceeded", "schema_version": 1, "status": "required" },
+    { "type": "CostBudgetWarning", "schema_version": 1, "status": "required" },
+    { "type": "ManualSpeechSubmitted", "schema_version": 1, "status": "required" }
+  ]
+}

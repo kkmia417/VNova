@@ -1,0 +1,36 @@
+{
+  "name": "vnova-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Production-grade LLM VTuber and AI talent broadcast runtime",
+  "license": "UNLICENSED",
+  "packageManager": "pnpm@11.13.1+sha512.b2fc7683b8a6525414e7d13e1ba28caaddde96bf66ec540bfaeb7e702b81f3e0be4d1f295edf7f9fe0396740a8dce4509c582ddf79891f4543fea32d37645f25",
+  "engines": {
+    "node": ">=24.11.0 <25",
+    "pnpm": ">=11.13.1 <12"
+  },
+  "scripts": {
+    "artifacts:verify": "uv run --locked --python 3.13 python -m tooling.artifacts.verify",
+    "build": "corepack pnpm --recursive --if-present run build",
+    "contracts:generate": "uv run --locked --python 3.13 python -m tooling.contracts.generate",
+    "contracts:check": "uv run --locked --python 3.13 python -m tooling.contracts.generate --check",
+    "ci:check": "uv run --locked --python 3.13 python -m tooling.ci.check_workflows",
+    "format": "prettier --write README.md AGENTS.md docs .github package.json pnpm-workspace.yaml tsconfig.base.json eslint.config.mjs prettier.config.mjs dependency-cruiser.config.mjs packages specs tests tooling/architecture/check_typescript_boundaries.mjs && uv run --locked --python 3.13 ruff format .",
+    "format:check": "prettier --check README.md AGENTS.md docs .github package.json pnpm-workspace.yaml tsconfig.base.json eslint.config.mjs prettier.config.mjs dependency-cruiser.config.mjs packages specs tests tooling/architecture/check_typescript_boundaries.mjs && uv run --locked --python 3.13 ruff format --check .",
+    "lint": "eslint . && node tooling/architecture/check_typescript_boundaries.mjs && uv run --locked --python 3.13 python -m tooling.architecture.check_boundaries && depcruise packages/contracts/typescript/src --config dependency-cruiser.config.mjs && uv run --locked --python 3.13 ruff check . && uv run --locked --python 3.13 lint-imports && corepack pnpm run ci:check",
+    "test": "corepack pnpm --recursive --if-present run test && uv run --locked --python 3.13 python -m pytest",
+    "typecheck": "corepack pnpm --recursive --if-present run typecheck && uv run --locked --python 3.13 mypy tooling tests packages/contracts/python/src packages/safety/src",
+    "verify": "corepack pnpm run contracts:check && corepack pnpm run format:check && corepack pnpm run lint && corepack pnpm run typecheck && corepack pnpm run test"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.13.3",
+    "dependency-cruiser": "18.1.0",
+    "eslint": "10.7.0",
+    "json-schema-to-typescript": "15.0.4",
+    "prettier": "3.9.5",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.64.0",
+    "vitest": "4.1.10"
+  }
+}

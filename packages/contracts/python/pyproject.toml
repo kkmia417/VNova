@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling==1.31.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vnova-contracts"
+version = "0.1.0"
+description = "Generated and runtime-validated VNova contracts"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "jsonschema[format]>=4.26,<5",
+    "pydantic>=2.11,<3",
+    "referencing>=0.36,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vnova_contracts"]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["src"]

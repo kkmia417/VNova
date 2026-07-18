@@ -1,0 +1,13 @@
+[importlinter]
+root_packages =
+    vnova_contracts
+    vnova_safety
+include_external_packages = True
+
+[importlinter:contract:safety-mint-is-protected]
+name = Only the safety package may import its mint module
+type = protected
+protected_modules =
+    vnova_safety._mint
+allowed_importers =
+    vnova_safety

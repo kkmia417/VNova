@@ -1,0 +1,8 @@
+{
+  "active_events": [],
+  "catalog_source": "specs/events/event-catalog.v1.json",
+  "catalog_source_sha256": "546afd44d0b5a3b69e3b86bd9af2c4a64500ef190e14f61627611c5fbdfef622",
+  "catalog_version": 1,
+  "payload_schemas": [],
+  "registry_version": 1
+}
